@@ -11,6 +11,7 @@ import (
 	otlog "github.com/opentracing/opentracing-go/log"
 )
 
+type TracerSensitiveFunc func(tracer ot.Tracer)
 type SpanSensitiveFunc func(span ot.Span)
 type ContextSensitiveFunc func(span ot.Span, ctx context.Context)
 
@@ -28,6 +29,12 @@ func NewSensor(serviceName string) *Sensor {
 			},
 		),
 	}
+}
+
+// Enables access to the sensor internal tracer for more complex scenarios, where additional
+// frameworks or integrations are created.
+func (s *Sensor) WithTracer(f TracerSensitiveFunc) {
+	f(s.tracer)
 }
 
 // It is similar to TracingHandler in regards, that it wraps an existing http.HandlerFunc

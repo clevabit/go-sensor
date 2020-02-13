@@ -54,13 +54,23 @@ func (p *Pool) Query(req *http.Request, ctx context.Context, query string, args 
 			query,
 		)
 	}
+	return p.QueryWithSpan(span, ctx, query, args...)
+}
 
+func (p *Pool) QueryWithSpan(span ot.Span, ctx context.Context, query string, args ...interface{}) (pgx.Rows, error) {
 	span.SetTag(string(ext.SpanKind), string(ext.SpanKindRPCClientEnum))
 	span.SetTag(string(ext.DBType), "postgres")
-	span.SetTag(string(ext.DBInstance), fmt.Sprintf("%s:%d", p.config.ConnConfig.Host, p.config.ConnConfig.Port))
+	span.SetTag(string(ext.DBInstance), p.config.ConnConfig.Host)
 	span.SetTag(string(ext.DBUser), p.config.ConnConfig.User)
 	span.SetTag(string(ext.DBStatement), query)
+	for i, arg := range args {
+		span.SetTag(fmt.Sprintf("sql.param.%d", i+1), fmt.Sprintf("%v", arg))
+	}
 	defer span.Finish()
 
-	return p.pool.Query(ctx, query, args...)
+	rows, err := p.pool.Query(ctx, query, args...)
+	if err != nil {
+		span.SetTag(string(ext.Error), err.Error())
+	}
+	return rows, err
 }

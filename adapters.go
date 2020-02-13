@@ -37,6 +37,18 @@ func (s *Sensor) WithTracer(f TracerSensitiveFunc) {
 	f(s.tracer)
 }
 
+func (s *Sensor) NewSpan(operationName string, options ...ot.StartSpanOption) ot.Span {
+	return s.tracer.StartSpan(operationName, options...)
+}
+
+func (s *Sensor) NewChildSpan(operationName string, parentSpan ot.Span, options ...ot.StartSpanOption) ot.Span {
+	params := []ot.StartSpanOption{
+		ot.ChildOf(parentSpan.Context()),
+	}
+	params = append(params, options...)
+	return s.NewSpan(operationName, params...)
+}
+
 // It is similar to TracingHandler in regards, that it wraps an existing http.HandlerFunc
 // into a named instance to support capturing tracing information and data. It, however,
 // provides a neater way to register the handler with existing frameworks by returning
@@ -50,12 +62,25 @@ func (s *Sensor) TraceHandler(name, pattern string, handler http.HandlerFunc) (s
 func (s *Sensor) TracingHandler(name string, handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		s.WithTracingContext(name, w, req, func(span ot.Span, ctx context.Context) {
+			errorResponse := false
+
 			// Capture response code for span
 			hooks := httpsnoop.Hooks{
 				WriteHeader: func(next httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
 					return func(code int) {
 						next(code)
 						span.SetTag(string(ext.HTTPStatusCode), code)
+						if code >= 500 {
+							errorResponse = true
+						}
+					}
+				},
+				Write: func(writeFunc httpsnoop.WriteFunc) httpsnoop.WriteFunc {
+					return func(b []byte) (i int, err error) {
+						if errorResponse {
+							span.SetTag(string(ext.Error), string(b))
+						}
+						return writeFunc(b)
 					}
 				},
 			}
@@ -94,6 +119,7 @@ func (s *Sensor) TracingHttpRequest(name string, parent, req *http.Request, clie
 	span.SetTag(string(ext.HTTPStatusCode), res.StatusCode)
 
 	if err != nil {
+		span.SetTag(string(ext.Error), err)
 		span.LogFields(otlog.Error(err))
 	}
 	return
@@ -140,6 +166,7 @@ func (s *Sensor) WithTracingSpan(name string, w http.ResponseWriter, req *http.R
 		// Be sure to capture any kind of panic / error
 		if err := recover(); err != nil {
 			if e, ok := err.(error); ok {
+				span.SetTag(string(ext.Error), err)
 				span.LogFields(otlog.Error(e))
 			} else {
 				span.LogFields(otlog.Object("error", err))

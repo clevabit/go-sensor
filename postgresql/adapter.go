@@ -12,6 +12,7 @@ import (
 )
 
 type Pool struct {
+	sensor *instana.Sensor
 	tracer ot.Tracer
 	config *pgxpool.Config
 	pool   *pgxpool.Pool
@@ -34,6 +35,7 @@ func NewWithConnectionString(sensor *instana.Sensor, connectionString string, ct
 	}
 
 	return &Pool{
+		sensor: sensor,
 		tracer: tracer,
 		config: config,
 		pool:   pool,
@@ -43,11 +45,18 @@ func NewWithConnectionString(sensor *instana.Sensor, connectionString string, ct
 func (p *Pool) Query(req *http.Request, ctx context.Context, query string, args ...interface{}) (pgx.Rows, error) {
 	parentSpan := req.Context().Value("parentSpan")
 
-	var span ot.Span
 	if ps, ok := parentSpan.(ot.Span); ok {
+		return p.QueryWithParentSpan(ps, ctx, query, args...)
+	}
+	return p.QueryWithSpan(nil, ctx, query, args...)
+}
+
+func (p *Pool) QueryWithParentSpan(parentSpan ot.Span, ctx context.Context, query string, args ...interface{}) (pgx.Rows, error) {
+	var span ot.Span
+	if parentSpan != nil {
 		span = p.tracer.StartSpan(
 			query,
-			ot.ChildOf(ps.Context()),
+			ot.ChildOf(parentSpan.Context()),
 		)
 	} else {
 		span = p.tracer.StartSpan(
@@ -58,14 +67,21 @@ func (p *Pool) Query(req *http.Request, ctx context.Context, query string, args 
 }
 
 func (p *Pool) QueryWithSpan(span ot.Span, ctx context.Context, query string, args ...interface{}) (pgx.Rows, error) {
+	host := p.config.ConnConfig.Host
+	port := p.config.ConnConfig.Port
+	user := p.config.ConnConfig.User
+	db := p.config.ConnConfig.Database
+
 	span.SetTag(string(ext.SpanKind), string(ext.SpanKindRPCClientEnum))
-	span.SetTag(string(ext.DBType), "postgres")
-	span.SetTag(string(ext.DBInstance), p.config.ConnConfig.Host)
-	span.SetTag(string(ext.DBUser), p.config.ConnConfig.User)
+	//span.SetOperationName("postgres")
+	span.SetTag(string(ext.DBType), "postgresql")
+	span.SetTag(string(ext.DBInstance), db)
+	span.SetTag(string(ext.DBUser), user)
 	span.SetTag(string(ext.DBStatement), query)
-	for i, arg := range args {
-		span.SetTag(fmt.Sprintf("sql.param.%d", i+1), fmt.Sprintf("%v", arg))
-	}
+	span.SetTag(string(ext.PeerAddress), fmt.Sprintf("%s:%d", host, port))
+	/*p.sensor.SetSpanAttribute(span, instana.PostgreSQL,
+		fmt.Sprintf(`{"stmt":"%s","host":"%s","port":%d,"user":"%s","db":"%s"}`, query, host, port, user, db),
+	)*/
 	defer span.Finish()
 
 	rows, err := p.pool.Query(ctx, query, args...)

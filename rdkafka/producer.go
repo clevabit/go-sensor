@@ -28,5 +28,9 @@ func (p *Producer) Produce(parentSpan ot.Span, msg *kafka.Message, deliveryChan 
 		}
 	})
 
-	return p.Producer.Produce(msg, deliveryChan)
+	if err := p.Producer.Produce(msg, deliveryChan); err != nil {
+		span.SetTag(string(ext.Error), err.Error())
+		return err
+	}
+	return nil
 }

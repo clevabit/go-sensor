@@ -26,6 +26,7 @@ func NewSensor(serviceName string) *Sensor {
 		NewTracerWithOptions(
 			&Options{
 				Service: serviceName,
+				EnableAutoProfile: true,
 			},
 		),
 	}
@@ -116,11 +117,12 @@ func (s *Sensor) TracingHttpRequest(name string, parent, req *http.Request, clie
 	span.SetTag(string(ext.PeerHostname), req.Host)
 	span.SetTag(string(ext.HTTPUrl), req.URL.String())
 	span.SetTag(string(ext.HTTPMethod), req.Method)
-	span.SetTag(string(ext.HTTPStatusCode), res.StatusCode)
 
 	if err != nil {
 		span.SetTag(string(ext.Error), err)
 		span.LogFields(otlog.Error(err))
+	} else {
+		span.SetTag(string(ext.HTTPStatusCode), res.StatusCode)
 	}
 	return
 }
